@@ -1,7 +1,7 @@
 const oauth2Client = require("../services/google");
 
 const supabase = require("../services/supabase");
-
+//test
 const connectGoogle = (req, res) => {
 
   const url = oauth2Client.generateAuthUrl({
