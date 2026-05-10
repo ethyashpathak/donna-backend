@@ -38,8 +38,17 @@ const googleCallback = async (req, res) => {
         }
       ]);
 
-    res.send("Donna successfully connected to Gmail.");
-
+   res.send(`
+  <html>
+    <body>
+      <script>
+        window.opener && window.opener.postMessage({ status: 'connected' }, '*');
+        window.close();
+      </script>
+      <p>Connected! You can close this window.</p>
+    </body>
+  </html>
+`);
   } catch(err) {
 
     console.log(err);

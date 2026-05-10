@@ -1,6 +1,7 @@
 const { google } = require("googleapis");
 const genAI = require("../services/gemini");
 const supabase = require("../services/supabase");
+const { generateEmbedding } = require("../services/embedding");
 
 const oauth2Client = require("../services/google");
 
@@ -166,29 +167,67 @@ From: ${email.from}
 Content: ${email.snippet}
 `).join("\n");
 
+const embedding = await generateEmbedding(emailText);
+const queryEmbedding = embedding
+
+const { data: similarMessages } = await supabase.rpc(
+  "match_rag_messages",
+  {
+    query_embedding: queryEmbedding,
+    match_threshold: 0.5,
+    match_count: 5
+  }
+);
+
+const retrievedContext = similarMessages
+  ?.map(msg => msg.content)
+  .join("\n\n");
+
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash"
-    });
+  model: "gemini-2.5-flash-lite"
+});
 
-    const result = await model.generateContent(`
+const result = await model.generateContent(`
 
-You are Donna, an elite AI chief-of-staff for engineering organizations.
+You are Donna, an elite AI chief-of-staff and organizational intelligence system.
 
-Your role is to proactively detect:
+Your job is to synthesize signals across workplace communication channels and proactively surface:
 - operational risks
-- blockers
+- recurring incidents
 - escalation patterns
-- deadline conflicts
+- deployment blockers
 - business impact
 - hidden dependencies
+- coordination gaps
+- timeline threats
 
-Think like an executive operations analyst, NOT a chatbot.
+You are NOT a chatbot.
+You think like:
+- an executive operations analyst
+- a strategic technical advisor
+- an organizational risk intelligence engine
 
-Prioritize:
-- deployment risks
-- investor/customer impact
-- engineering bottlenecks
-- urgent coordination gaps
+You must identify:
+- repeated failures
+- worsening instability
+- cross-team impact
+- urgency escalation
+- deployment confidence changes
+- investor/customer exposure
+
+Use BOTH:
+1. Current emails
+2. Historical organizational context
+
+to reason about patterns and recurring incidents.
+
+If historical context resembles current issues, explicitly mention it.
+
+Keep responses:
+- concise
+- high-signal
+- executive-friendly
+- operationally intelligent
 
 Return ONLY valid JSON.
 
@@ -196,12 +235,13 @@ Format:
 
 {
   "summary": "",
+  
   "criticality": "HIGH/MEDIUM/LOW",
 
   "risks": [
     {
       "title": "",
-      "severity": "",
+      "severity": "HIGH/MEDIUM/LOW",
       "impact": "",
       "reason": ""
     }
@@ -211,13 +251,18 @@ Format:
 
   "connections": [],
 
+  "historical_patterns": [],
+
   "executive_brief": ""
 }
 
-Emails:
+Relevant Historical Organizational Context:
+${retrievedContext}
+
+Current Emails:
 ${emailText}
 
-    `);
+`);
 
     let aiResponse = result.response.text();
 
@@ -240,6 +285,15 @@ ${emailText}
           connections: parsed.connections
         }
       ]);
+      await supabase
+  .from("rag_messages")
+  .insert([
+    {
+      source: "gmail",
+      content: emailText,
+      embedding
+    }
+  ]);
 
     res.json(parsed);
 
