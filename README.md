@@ -1,194 +1,237 @@
-# Donna-Backend
+# Donna — Workplace Intelligence Backend
 
-A Node.js backend that ingests workplace communications (user-provided messages and Gmail), runs executive-style analysis using Google Gemini (generative + embeddings), and persists raw messages, Gmail OAuth tokens, and AI-generated insights to a Supabase database.
+A Node.js backend that transforms workplace communications into executive-grade insights. Donna ingests messages and Gmail, embeds raw emails into a vector database, and uses retrieval-augmented generation (RAG) to produce historically-grounded analysis: summaries, ranked risks, action items, and relationship connections — all explained with source context.
 
-This README explains how to run the project, required environment variables, the database tables the code expects, and the HTTP API a frontend developer can use to integrate with the service.
+---
+
+## How It Works
+
+```
+Gmail / User Messages
+        ↓
+  Raw email text extracted
+        ↓
+  Embeddings generated (Gemini gemini-embedding-001, 768-dim)
+        ↓
+  Stored in Supabase pgvector
+        ↓
+  New analysis → similarity search retrieves past relevant emails
+        ↓
+  Retrieved context + new messages → Gemini generation
+        ↓
+  Insights: summary, risks (severity-ranked), action items, connections
+        ↓
+  Persisted to Supabase + served to dashboard
+```
+
+The RAG loop is what makes Donna different from a simple summarizer. Because raw emails — not just previous summaries — are embedded and retrieved, every new analysis is grounded in actual historical communication patterns. Risks are ranked HIGH / MEDIUM / LOW with a reason field explaining *why*, traceable back to the source messages.
+
+---
 
 ## Features
 
-- Accept user messages for analysis and persist raw messages.
-- Connect to Gmail via OAuth (read-only) and fetch messages for analysis.
-- Use Google Gemini models for content generation and embeddings.
-- Persist insights (summary, risks, action items, connections) to Supabase.
+- **RAG-powered analysis** — retrieves semantically similar past emails before generating insights, enabling cross-session comparison and trend detection
+- **pgvector embeddings** — raw Gmail messages embedded at ingestion time using Gemini's `gemini-embedding-001` model; stored natively in Supabase via the pgvector extension
+- **Gmail OAuth integration** — read-only Gmail access via Google OAuth 2.0; tokens persisted to Supabase
+- **Severity-ranked insights** — risks, action items, and historical context ranked by severity (HIGH / MEDIUM / LOW) with explanations
+- **Executive dashboard** — frontend visualizes insights, risk trends, and connections across sessions
+- **Supabase-native stack** — single database for messages, embeddings, tokens, and insights; no separate vector DB infrastructure needed
 
-## Quick start (development)
+---
 
-1. Install dependencies
+## Quick Start
 
-```cmd
+```bash
 npm install
-```
-
-2. Start in development mode (uses `nodemon` if configured)
-
-```cmd
 npm run dev
 ```
 
-By default the app listens on the port configured in `PORT` environment variable (check `src/index.js`). Local base URL: `http://localhost:3000`.
+Server runs on `http://localhost:3000` by default (configure via `PORT`).
 
-## Required environment variables
+---
 
-Set these in a `.env` file or your environment before running the server.
+## Environment Variables
 
-- `PORT` (optional) — server port
-- `SUPABASE_URL` — your Supabase project URL
-- `SUPABASE_API` — Supabase service key or anon key used by the server
-- `GOOGLE_CLIENT_ID` — Google OAuth client ID
-- `GOOGLE_CLIENT_SECRET` — Google OAuth client secret
-- `GEMINI_API_KEY` — API key for Google Generative AI client
+Create a `.env` file — never commit it.
 
-Keep keys secret and never commit `.env` to source control.
+| Variable | Required | Description |
+|---|---|---|
+| `PORT` | No | Server port (default 3000) |
+| `SUPABASE_URL` | Yes | Your Supabase project URL |
+| `SUPABASE_API` | Yes | Supabase service key |
+| `GOOGLE_CLIENT_ID` | Yes | Google OAuth client ID |
+| `GOOGLE_CLIENT_SECRET` | Yes | Google OAuth client secret |
+| `GEMINI_API_KEY` | Yes | Google Generative AI API key |
 
-## Database tables (expected)
+---
 
-The code assumes the following tables exist in Supabase (names inferred from `src/controllers`):
+## Database Schema
 
-- `gmail_tokens` — stores OAuth tokens for a connected Gmail account
-  - Columns: `access_token`, `refresh_token`, `scope`, `token_type`, `expiry_date`
+Create these tables in Supabase. Enable the `pgvector` extension first:
 
-- `messages` — stores raw messages (ingested from Gmail or user input)
-  - Columns: `id` (pk), `source` (string: `user` or `gmail`), `content` (text), `created_at`
+```sql
+create extension if not exists vector;
+```
 
-- `insights` — stores parsed AI outputs
-  - Columns: `id` (pk), `summary` (text), `risks` (jsonb/array), `action_items` (jsonb/array), `connections` (jsonb/array), `created_at`
+### `gmail_tokens`
+Stores OAuth tokens for connected Gmail accounts.
 
-Create these tables in Supabase or adjust the service code to match your schema.
+| Column | Type |
+|---|---|
+| `access_token` | text |
+| `refresh_token` | text |
+| `scope` | text |
+| `token_type` | text |
+| `expiry_date` | bigint |
 
-## HTTP API (for frontend)
+### `messages`
+Raw messages ingested from Gmail or user input.
 
-Base URL (local): `http://localhost:3000`
-Default request header: `Content-Type: application/json`
+| Column | Type |
+|---|---|
+| `id` | uuid (pk) |
+| `source` | text — `user` or `gmail` |
+| `content` | text |
+| `embedding` | vector(768) |
+| `created_at` | timestamptz |
 
-### 1) POST /analyze
+The `embedding` column stores the 768-dimensional vector produced by `gemini-embedding-001`. Used for similarity search during RAG retrieval.
 
-- Purpose: Persist provided messages and run Gemini analysis.
-- Request body:
+```sql
+-- Index for fast similarity search
+create index on messages using ivfflat (embedding vector_cosine_ops);
+```
 
+### `insights`
+AI-generated analysis results.
+
+| Column | Type |
+|---|---|
+| `id` | uuid (pk) |
+| `summary` | text |
+| `risks` | jsonb |
+| `action_items` | jsonb |
+| `connections` | jsonb |
+| `created_at` | timestamptz |
+
+---
+
+## HTTP API
+
+Base URL (local): `http://localhost:3000`  
+Default header: `Content-Type: application/json`
+
+### `POST /analyze`
+
+Persist provided messages, embed them, run RAG-augmented Gemini analysis, return insights.
+
+**Request:**
 ```json
 {
-  "messages": ["Message 1 text", "Message 2 text"]
+  "messages": ["Please review Q2 projections", "Need ETA by Friday"]
 }
 ```
 
-- Successful response (200) — JSON insight object:
-
+**Response (200):**
 ```json
 {
-  "summary": "Two-sentence executive summary",
+  "summary": "Two-sentence executive summary.",
   "risks": [
-    { "title": "Risk title", "severity": "HIGH|MEDIUM|LOW", "reason": "Why" }
+    { "title": "Deadline pressure on Q2 review", "severity": "HIGH", "reason": "Repeated urgency signals across this and prior sessions" }
   ],
-  "action_items": ["Action item 1"],
-  "connections": ["Related people or teams"]
+  "action_items": ["Confirm Q2 review owner by EOD"],
+  "connections": ["Finance team", "Alice (sender)"]
 }
 ```
 
-- Errors:
-  - 400: invalid request body (validate `messages` on the client)
-  - 500: server error — returns `{ "error": "Analysis failed" }` in current implementation
+**Errors:** `400` invalid body — `500` analysis failed.
 
-Example fetch (frontend):
+---
 
-```js
-await fetch('/analyze', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ messages: ['Please review Q2', 'Need ETA by Friday'] })
-}).then(r => r.json());
-```
+### `GET /gmail/messages`
 
-### 2) GET /gmail/messages
+Return recent Gmail messages from the connected account.
 
-- Purpose: Return a compact list of recent Gmail messages from the connected account.
-- Request: `GET /gmail/messages`
-- Response example:
-
+**Response:**
 ```json
 [
-  { "id": "gmail-message-id", "subject": "Subject", "from": "Alice <alice@example.com>", "snippet": "Message snippet" }
+  { "id": "...", "subject": "Q2 Review", "from": "Alice <alice@example.com>", "snippet": "..." }
 ]
 ```
 
-- Errors: 401/403/500 if tokens are missing/invalid or Gmail API calls fail. Frontend should show a "Connect Gmail" option if connection is missing.
+**Errors:** `401/403` if tokens missing or invalid — show "Connect Gmail" prompt in frontend.
 
-### 3) POST /gmail/analyze
+---
 
-- Purpose: Backend fetches recent Gmail messages, persists them, runs Gemini analysis (same flow as `/analyze`) and returns insights.
-- Request: `POST /gmail/analyze` (no body required by current implementation)
-- Response: same insight JSON shape as `/analyze`.
+### `POST /gmail/analyze`
 
-## OAuth / frontend integration details
+Fetch recent Gmail messages, embed and persist them, run RAG analysis, return insights. Same response shape as `POST /analyze`. No request body required.
 
-The backend exposes a simple OAuth handshake for Gmail:
+---
 
-- `GET /auth/google` — opens Google's consent screen (backend redirects to Google).
-- `GET /auth/google/callback` — OAuth redirect target; backend exchanges code for tokens and persists them to Supabase.
+## Gmail OAuth Flow
 
-Frontend integration pattern (recommended):
+### Backend routes
 
-1. Open `/auth/google` in a popup window.
-2. The OAuth callback page in the backend sends a postMessage to the opener and closes itself:
+| Route | Description |
+|---|---|
+| `GET /auth/google` | Redirects to Google consent screen |
+| `GET /auth/google/callback` | Exchanges code for tokens, persists to Supabase |
 
-```js
-// in src/controllers/auth.controller.js the callback includes:
-// window.opener && window.opener.postMessage({ status: 'connected' }, '*')
-```
+### Frontend integration
 
-3. In the frontend, listen for the `message` event and refresh the UI or call `GET /gmail/messages`.
-
-Popup example (frontend):
-
-```js
+```javascript
+// Open consent screen in a popup
 const popup = window.open('/auth/google', 'connectGmail', 'width=600,height=700');
 
+// Listen for completion message
 window.addEventListener('message', (ev) => {
   if (ev.data?.status === 'connected') {
-    // update app state, fetch /gmail/messages
+    // refresh UI, fetch /gmail/messages
   }
 });
 
-// fallback: poll until popup closes and then call /gmail/messages
+// Fallback: poll until popup closes
 const poll = setInterval(() => {
   if (popup.closed) {
     clearInterval(poll);
-    fetch('/gmail/messages').then(...);
+    fetch('/gmail/messages').then(r => r.json()).then(updateUI);
   }
 }, 500);
 ```
 
-## Embeddings utility
+---
 
-The project includes `src/services/embedding.js` which exports `generateEmbedding(text)` that calls Gemini's `gemini-embedding-001` model and returns a 768-dimensional vector. This is a server-side utility and not exposed as a public endpoint by default.
+## RAG Implementation Notes
 
-## Error handling and caveats
-
-- The code expects Gemini to return strict JSON. The controllers strip triple-backtick fences and call `JSON.parse` on the model output. If the model returns malformed JSON, parsing errors will occur — add retry logic and user-facing guidance on the frontend.
-- Google API token refresh is supported by `googleapis` in memory, but refreshed tokens are not automatically saved back into Supabase in the current implementation.
-
-## Security
-
-- Never expose `SUPABASE_API`, `GEMINI_API_KEY` or `GOOGLE_CLIENT_SECRET` to the frontend.
-- Use HTTPS in production and configure CORS to restrict allowed origins (see `src/index.js`).
-
-## Development notes & suggestions
-
-- Add a user identifier to `gmail_tokens`, `messages`, and `insights` to support multi-user usage.
-- Persist refreshed Google tokens when `googleapis` refreshes credentials.
-- Add input validation and sanitization in controllers.
-- Add unit tests that mock the Gemini client and Supabase client.
-
-## Troubleshooting
-
-- If OAuth immediately fails, verify `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and that your Google Cloud OAuth consent screen and redirect URIs include `http://localhost:3000/auth/google/callback`.
-- If Gemini calls fail, verify `GEMINI_API_KEY` and network access.
-- If Supabase writes fail, verify `SUPABASE_URL` and `SUPABASE_API` and that the expected tables exist.
-
-## Next steps
-
-- Add example frontend components (React) for the analyze form, results rendering, and OAuth popup handler.
-- Add CI and unit tests to validate controller behavior.
+Embeddings are generated at ingestion time for every raw email using `src/services/embedding.js` (`generateEmbedding(text)` → 768-dim vector via `gemini-embedding-001`). At analysis time, the incoming messages are embedded and a cosine similarity search over `messages.embedding` retrieves the most relevant historical emails. These are prepended to the Gemini generation prompt as context, enabling the model to reference patterns across sessions — not just the current batch.
 
 ---
 
-File: `README.md` created at repository root to document the project for frontend and backend developers.
+## Known Limitations & Roadmap
+
+- **Multi-user support** — `gmail_tokens`, `messages`, and `insights` have no user identifier. Add a `user_id` column to support multiple accounts.
+- **Token refresh persistence** — `googleapis` refreshes credentials in memory but does not write updated tokens back to Supabase. Implement a token refresh callback.
+- **Input validation** — controllers currently do minimal validation. Add sanitization before production use.
+- **Gemini JSON reliability** — the backend strips markdown fences and calls `JSON.parse` on model output. Add retry logic for malformed responses.
+- **Tests** — no unit tests yet. Priority: mock Gemini and Supabase clients.
+
+---
+
+## Security
+
+- Never expose `SUPABASE_API`, `GEMINI_API_KEY`, or `GOOGLE_CLIENT_SECRET` to the frontend.
+- Use HTTPS in production.
+- Configure CORS in `src/index.js` to restrict allowed origins.
+
+---
+
+## Troubleshooting
+
+**OAuth fails immediately** — verify `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and that `http://localhost:3000/auth/google/callback` is listed as an authorized redirect URI in your Google Cloud Console.
+
+**Gemini calls fail** — verify `GEMINI_API_KEY` and outbound network access.
+
+**Supabase writes fail** — verify `SUPABASE_URL` and `SUPABASE_API`, and confirm the pgvector extension is enabled and tables exist with the correct schema.
+
+**Similarity search slow** — ensure the IVFFlat index on `messages.embedding` exists. Run `ANALYZE messages;` after bulk inserts.
