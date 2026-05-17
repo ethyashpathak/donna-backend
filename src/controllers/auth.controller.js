@@ -1,7 +1,6 @@
 const oauth2Client = require("../services/google");
-
 const supabase = require("../services/supabase");
-//test
+
 const connectGoogle = (req, res) => {
 
   const url = oauth2Client.generateAuthUrl({
@@ -38,17 +37,25 @@ const googleCallback = async (req, res) => {
         }
       ]);
 
-   res.send(`
-  <html>
-    <body>
-      <script>
-        window.opener && window.opener.postMessage({ status: 'connected' }, '*');
-        window.close();
-      </script>
-      <p>Connected! You can close this window.</p>
-    </body>
-  </html>
-`);
+    res.send(`
+      <html>
+        <body>
+          <script>
+            window.opener &&
+            window.opener.postMessage(
+              { status:'connected' },
+              '*'
+            );
+
+            window.close();
+          </script>
+
+          <p>Connected!</p>
+
+        </body>
+      </html>
+    `);
+
   } catch(err) {
 
     console.log(err);
@@ -59,7 +66,57 @@ const googleCallback = async (req, res) => {
 
 };
 
+const logoutGoogle = async (req,res) => {
+
+  try {
+
+    const { data } = await supabase
+      .from("gmail_tokens")
+      .select("*")
+      .limit(1);
+
+    if(data?.length){
+
+      const token=data[0];
+
+      // revoke Google access
+
+      if(token.access_token){
+
+        await oauth2Client.revokeToken(
+          token.access_token
+        );
+
+      }
+
+    }
+
+    // remove tokens from DB
+
+    await supabase
+      .from("gmail_tokens")
+      .delete()
+      .neq("id","00000000-0000-0000-0000-000000000000");
+
+    res.json({
+      success:true,
+      message:"Donna disconnected Gmail"
+    });
+
+  } catch(err){
+
+    console.log(err);
+
+    res.status(500).json({
+      error:"Logout failed"
+    });
+
+  }
+
+};
+
 module.exports = {
   connectGoogle,
-  googleCallback
+  googleCallback,
+  logoutGoogle
 };

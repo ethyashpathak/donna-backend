@@ -1,14 +1,23 @@
-const express = require("express");
+const express=require("express");
 
-const router = express.Router();
+const router=express.Router();
 
 const {
   connectGoogle,
+  googleCallback,
+  logoutGoogle
+}=require("../controllers/auth.controller");
+
+router.get("/google",connectGoogle);
+
+router.get(
+  "/google/callback",
   googleCallback
-} = require("../controllers/auth.controller");
+);
 
-router.get("/google", connectGoogle);
+router.get(
+  "/logout",
+  logoutGoogle
+);
 
-router.get("/google/callback", googleCallback);
-
-module.exports = router;
+module.exports=router;
