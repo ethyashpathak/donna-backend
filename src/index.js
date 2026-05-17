@@ -10,7 +10,7 @@ app.use(
   cors({
     origin: [
       "http://localhost:5173",
-      "https://donna-rouge-beta.vercel.app"
+      "https://donna-frontend-eight.vercel.app/"
     ],
     credentials: true
   })
