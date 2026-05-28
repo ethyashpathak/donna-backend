@@ -7,7 +7,9 @@ const {
   analyzeEmails
 } = require("../controllers/gmail.controller");
 
-router.get("/messages", getEmails);
-router.post("/analyze", analyzeEmails);
+const { requireAuth } = require("../middleware/auth.middleware");
+
+router.get("/messages", requireAuth, getEmails);
+router.post("/analyze", requireAuth, analyzeEmails);
 
 module.exports = router;

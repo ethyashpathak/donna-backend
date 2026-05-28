@@ -13,6 +13,7 @@ const analyzeMessages = async (req, res) => {
     .insert([
       {
         source: "user",
+        user_id: req.userId,
         content: msg
       }
     ]);
@@ -82,6 +83,7 @@ ${combinedText}
          .from("insights")
          .insert([
            {
+             user_id: req.userId,
              summary: parsed.summary,
              risks: parsed.risks,
              action_items: parsed.action_items,

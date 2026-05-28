@@ -6,6 +6,8 @@ const {
   analyzeMessages
 } = require("../controllers/analyze.controller");
 
-router.post("/", analyzeMessages);
+const { requireAuth } = require("../middleware/auth.middleware");
+
+router.post("/", requireAuth, analyzeMessages);
 
 module.exports = router;

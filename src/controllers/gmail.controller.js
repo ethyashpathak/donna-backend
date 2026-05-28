@@ -10,25 +10,26 @@ const getEmails = async (req, res) => {
   try {
 
     const { data, error } = await supabase
-  .from("gmail_tokens")
-  .select("*")
-  .limit(1);
+      .from("gmail_tokens")
+      .select("*")
+      .eq("user_id", req.userId)
+      .single();
 
-if (error || !data.length) {
-  return res.status(401).json({
-    error: "No Gmail tokens found"
-  });
-}
+    if (error || !data) {
+      return res.status(401).json({
+        error: "No Gmail tokens found"
+      });
+    }
 
-const token = data[0];
+    const token = data;
 
-oauth2Client.setCredentials({
-  access_token: token.access_token,
-  refresh_token: token.refresh_token,
-  scope: token.scope,
-  token_type: token.token_type,
-  expiry_date: token.expiry_date
-});
+    oauth2Client.setCredentials({
+      access_token: token.access_token,
+      refresh_token: token.refresh_token,
+      scope: token.scope,
+      token_type: token.token_type,
+      expiry_date: token.expiry_date
+    });
 
     const gmail = google.gmail({
       version: "v1",
@@ -44,7 +45,7 @@ oauth2Client.setCredentials({
 
     const emails = [];
 
-    for(const msg of messages) {
+    for (const msg of messages) {
 
       const email = await gmail.users.messages.get({
         userId: "me",
@@ -71,7 +72,7 @@ oauth2Client.setCredentials({
 
     res.json(emails);
 
-  } catch(err) {
+  } catch (err) {
 
     console.log(err);
 
@@ -89,15 +90,16 @@ const analyzeEmails = async (req, res) => {
     const { data, error } = await supabase
       .from("gmail_tokens")
       .select("*")
-      .limit(1);
+      .eq("user_id", req.userId)
+      .single();
 
-    if (error || !data.length) {
+    if (error || !data) {
       return res.status(401).json({
         error: "No Gmail tokens found"
       });
     }
 
-    const token = data[0];
+    const token = data;
 
     oauth2Client.setCredentials({
       access_token: token.access_token,
@@ -150,6 +152,7 @@ const analyzeEmails = async (req, res) => {
 
     const rows = emails.map(email => ({
       source: "gmail",
+      user_id: req.userId,
       content: `
 Subject: ${email.subject}
 From: ${email.from}
@@ -167,27 +170,28 @@ From: ${email.from}
 Content: ${email.snippet}
 `).join("\n");
 
-const embedding = await generateEmbedding(emailText);
-const queryEmbedding = embedding
+    const embedding = await generateEmbedding(emailText);
+    const queryEmbedding = embedding
 
-const { data: similarMessages } = await supabase.rpc(
-  "match_rag_messages",
-  {
-    query_embedding: queryEmbedding,
-    match_threshold: 0.5,
-    match_count: 5
-  }
-);
+    const { data: similarMessages } = await supabase.rpc(
+      "match_rag_messages",
+      {
+        query_embedding: queryEmbedding,
+        match_threshold: 0.5,
+        match_count: 5,
+        p_user_id: req.userId
+      }
+    );
 
-const retrievedContext = similarMessages
-  ?.map(msg => msg.content)
-  .join("\n\n");
+    const retrievedContext = similarMessages
+      ?.map(msg => msg.content)
+      .join("\n\n");
 
     const model = genAI.getGenerativeModel({
-  model: "gemini-2.5-flash-lite"
-});
+      model: "gemini-2.5-flash"
+    });
 
-const result = await model.generateContent(`
+    const result = await model.generateContent(`
 
 You are Donna, an elite AI chief-of-staff and organizational intelligence system.
 
@@ -279,25 +283,27 @@ ${emailText}
       .from("insights")
       .insert([
         {
+          user_id: req.userId,
           summary: parsed.summary,
           risks: parsed.risks,
           action_items: parsed.action_items,
           connections: parsed.connections
         }
       ]);
-      await supabase
-  .from("rag_messages")
-  .insert([
-    {
-      source: "gmail",
-      content: emailText,
-      embedding
-    }
-  ]);
+    await supabase
+      .from("rag_messages")
+      .insert([
+        {
+          user_id: req.userId,
+          source: "gmail",
+          content: emailText,
+          embedding
+        }
+      ]);
 
     res.json(parsed);
 
-  } catch(err) {
+  } catch (err) {
 
     console.log(err);
 
