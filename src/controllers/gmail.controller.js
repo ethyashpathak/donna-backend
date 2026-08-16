@@ -177,8 +177,8 @@ Content: ${email.snippet}
       "match_rag_messages",
       {
         query_embedding: queryEmbedding,
-        match_threshold: 0.5,
-        match_count: 5,
+        match_threshold: 0.35,
+        match_count: 15,
         p_user_id: req.userId
       }
     );
