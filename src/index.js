@@ -26,7 +26,6 @@ app.use((req, res, next) => {
 app.use(express.json());
 app.use(cookieParser()); // required to read req.cookies
 
-app.get("/", (req, res) => res.send("Donna backend running"));
 app.get("/", (req, res) => {
   console.log("Ping received at:", new Date().toISOString());
   res.send("Donna backend running");
